@@ -1,0 +1,5 @@
+mistune>=2.0.0
+python-docx>=1.0.0
+latex2mathml
+lxml
+mathml2omml
