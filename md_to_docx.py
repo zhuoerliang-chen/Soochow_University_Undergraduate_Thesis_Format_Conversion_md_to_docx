@@ -158,6 +158,33 @@ def _add_blank_line(doc: Document, ctx: Optional[RenderContext] = None) -> None:
         ctx.last_was_blank_line = True
 
 
+def _apply_one_line_spacing_around_paragraph(
+    paragraph,
+    *,
+    config: WordFormatConfig,
+    before_lines: float = 1.0,
+    after_lines: float = 1.0,
+) -> None:
+    line_pt = float(config.body_font_size_pt) * float(config.body_line_spacing)
+    pf = paragraph.paragraph_format
+    pf.space_before = Pt(line_pt * before_lines)
+    pf.space_after = Pt(line_pt * after_lines)
+
+
+def _remove_leading_empty_paragraphs(doc: Document) -> None:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    while doc.paragraphs:
+        p = doc.paragraphs[0]
+        if p.text.strip():
+            break
+        has_struct = bool(
+            p._p.xpath(".//w:br|.//w:drawing|.//w:object|.//w:tbl|.//w:fldChar|.//w:instrText", namespaces=ns)
+        )
+        if has_struct:
+            break
+        p._p.getparent().remove(p._p)
+
+
 def _get_or_add_rfonts(rpr) -> OxmlElement:
     for child in rpr:
         if child.tag == qn("w:rFonts"):
@@ -1541,23 +1568,19 @@ def _render_blocks(
                 i += 1
                 continue
             heading_text = _extract_plain_text(token.get("children", []), prepared).strip()
+            page_break_before = False
             if ctx and level == 1:
                 normalized = re.sub(r"\s+", "", heading_text).lower()
                 ctx.in_references = ("参考文献" in normalized) or (normalized == "references") or normalized.startswith("references")
-                if not ctx.seen_first_h1:
-                    _add_blank_line(doc, ctx)
-                elif not ctx.last_was_page_break:
-                    doc.add_page_break()
+                if ctx.seen_first_h1 and not ctx.last_was_page_break:
+                    page_break_before = True
                     ctx.last_was_page_break = True
                     ctx.last_was_blank_line = False
-                    _add_blank_line(doc, ctx)
                 ctx.seen_first_h1 = True
-            if ctx and level == 2:
-                _add_blank_line(doc, ctx)
-            if ctx and level in (3, 4):
-                _add_blank_line(doc, ctx)
             heading_level = min(level, 4)
             p = doc.add_heading("", level=heading_level)
+            if page_break_before:
+                p.paragraph_format.page_break_before = True
             if ctx:
                 ctx.last_was_blank_line = False
             if level == 1:
@@ -1578,7 +1601,7 @@ def _render_blocks(
                 citation_ascii_font=(heading_config.body_ascii_font if ctx else "Times New Roman"),
             )
             if level in (1, 2, 3, 4):
-                _add_blank_line(doc, ctx)
+                _apply_one_line_spacing_around_paragraph(p, config=heading_config, before_lines=1.0, after_lines=1.0)
             if ctx and level in (1, 2, 3, 4) and ctx.toc_pos < len(ctx.toc_entries):
                 entry = ctx.toc_entries[ctx.toc_pos]
                 if entry.level == level:
@@ -1904,7 +1927,10 @@ def _configure_document_styles(doc: Document, *, config: WordFormatConfig) -> No
         if name in doc.styles:
             _set_style_font(doc.styles[name], east_asia=east_asia, ascii_font=config.heading_ascii_font, size_pt=size, bold=bold)
             _set_style_paragraph(doc.styles[name], line_spacing=config.body_line_spacing, space_before_pt=0, space_after_pt=after, first_line_indent_cm=None)
-            doc.styles[name].paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER if name == "Heading 1" else WD_ALIGN_PARAGRAPH.LEFT
+            pf = doc.styles[name].paragraph_format
+            pf.alignment = WD_ALIGN_PARAGRAPH.CENTER if name == "Heading 1" else WD_ALIGN_PARAGRAPH.LEFT
+            pf.keep_with_next = False
+            pf.keep_together = False
 
     if "TOC Heading" in doc.styles:
         _set_style_font(
@@ -2046,15 +2072,15 @@ def _compute_toc_tab_pos_cm(section) -> float:
 
 
 def _add_manual_toc(doc: Document, section, toc_entries: list[TocEntry], *, config: WordFormatConfig) -> None:
-    _add_blank_line(doc)
     heading = doc.add_paragraph(config.toc_title_text, style="Heading 1" if "Heading 1" in doc.styles else None)
+    heading.paragraph_format.page_break_before = True
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _apply_one_line_spacing_around_paragraph(heading, config=config, before_lines=1.0, after_lines=1.0)
     for run in heading.runs:
         run.bold = config.toc_title_bold
         run.italic = False
         run.font.size = Pt(config.toc_title_size_pt)
         _apply_run_fonts(run, east_asia=config.toc_title_east_asia_font, ascii_font=config.toc_title_ascii_font)
-    _add_blank_line(doc)
     tab_pos_cm = _compute_toc_tab_pos_cm(section)
     for entry in toc_entries:
         toc_east_asia = (
@@ -2100,38 +2126,7 @@ def build_toc_entries(ast: list[dict], prepared: PreparedMarkdown) -> list[TocEn
     seq_no = 0
 
     def _normalize_heading_label(text: str, *, level: int) -> str:
-        t = text.strip()
-        if level == 1:
-            return t
-
-        if level == 2:
-            m = re.match(r"^第\s*(\d+(?:[．\.]\d+){1})\s*节\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            m = re.match(r"^(\d+(?:[．\.]\d+){1})\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            return t
-
-        if level == 3:
-            m = re.match(r"^第\s*(\d+(?:[．\.]\d+){2})\s*节\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            m = re.match(r"^(\d+(?:[．\.]\d+){2})\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            return t
-
-        if level == 4:
-            m = re.match(r"^第\s*(\d+(?:[．\.]\d+){3})\s*节\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            m = re.match(r"^(\d+(?:[．\.]\d+){3})\s*(.+)$", t)
-            if m:
-                return f"第 {m.group(1).replace('．', '.')} 节 {m.group(2).strip()}"
-            return t
-
-        return t
+        return text.strip()
 
     def _walk(nodes: list[dict]) -> None:
         nonlocal seq_no
@@ -2231,61 +2226,58 @@ def convert_markdown_to_docx(input_path: Path, output_path: Path, *, config: Wor
 
     doc = Document()
     _configure_document_styles(doc, config=config)
+    _remove_leading_empty_paragraphs(doc)
 
     front_section = doc.sections[0]
     _configure_section_layout(front_section, config=config)
     _setup_header_footer(front_section, config=config, show_page_number=True, roman=True, hyphen=False)
     _set_section_page_numbering(front_section, start=1, fmt="roman")
 
-    _add_blank_line(doc)
     zh_title_p = doc.add_paragraph()
     zh_title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _apply_one_line_spacing_around_paragraph(zh_title_p, config=config, before_lines=1.0, after_lines=1.0)
     zh_run = zh_title_p.add_run(zh_title)
     zh_run.bold = True
     zh_run.italic = False
     zh_run.font.size = Pt(config.title_font_size_pt)
     _apply_run_fonts(zh_run, east_asia=config.title_east_asia_font, ascii_font=config.title_ascii_font)
 
-    _add_blank_line(doc)
     abs_heading = doc.add_paragraph()
     abs_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _apply_one_line_spacing_around_paragraph(abs_heading, config=config, before_lines=1.0, after_lines=1.0)
     abs_run = abs_heading.add_run(config.abstract_heading_text_zh)
     abs_run.bold = True
     abs_run.italic = False
     abs_run.font.size = Pt(config.abstract_heading_size_pt)
     _apply_run_fonts(abs_run, east_asia=config.abstract_heading_font_east_asia, ascii_font=config.abstract_heading_font_ascii)
-    _add_blank_line(doc)
     if zh_abstract_md.strip():
         prepared_abs = prepare_markdown(zh_abstract_md)
         ast_abs = _parse_markdown_to_ast(prepared_abs)
         _render_blocks(doc, ast_abs, prepared_abs, base_path=base_path)
 
-    doc.add_page_break()
     if en_abstract_md.strip():
-        _add_blank_line(doc)
-        _add_blank_line(doc)
         en_title_text = en_title.strip() if en_title.strip() else "Entropy-Focused Group Relative Policy Optimization"
         en_title_p = doc.add_paragraph()
+        en_title_p.paragraph_format.page_break_before = True
         en_title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _apply_one_line_spacing_around_paragraph(en_title_p, config=config, before_lines=1.0, after_lines=1.0)
         en_title_run = en_title_p.add_run(en_title_text)
         en_title_run.bold = True
         en_title_run.italic = False
         en_title_run.font.size = Pt(config.title_font_size_pt)
         _apply_run_fonts(en_title_run, east_asia=config.title_ascii_font, ascii_font=config.title_ascii_font)
 
-        _add_blank_line(doc)
         en_heading = doc.add_paragraph()
         en_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _apply_one_line_spacing_around_paragraph(en_heading, config=config, before_lines=1.0, after_lines=1.0)
         en_abs_run = en_heading.add_run(config.abstract_heading_text_en)
         en_abs_run.bold = True
         en_abs_run.italic = False
         en_abs_run.font.size = Pt(config.abstract_heading_size_pt)
         _apply_run_fonts(en_abs_run, east_asia=config.abstract_heading_font_east_asia, ascii_font=config.abstract_heading_font_ascii)
-        _add_blank_line(doc)
         prepared_en = prepare_markdown(en_abstract_md)
         ast_en = _parse_markdown_to_ast(prepared_en)
         _render_blocks(doc, ast_en, prepared_en, base_path=base_path)
-        doc.add_page_break()
     prepared_main = prepare_markdown(main_md)
     ast_main = _parse_markdown_to_ast(prepared_main)
     table_number_map = build_table_number_map(ast_main, prepared_main)
