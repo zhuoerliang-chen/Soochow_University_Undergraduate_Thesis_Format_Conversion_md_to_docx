@@ -17,20 +17,22 @@ from dataclasses import dataclass
 说明：
 - python-docx 使用 Pt(...) 以“磅（point）”为单位设置字号。
 - 行距 line_spacing 使用倍数（例如 1.5 表示 1.5 倍行距）。
-- 缩进/页边距使用 Cm(...) 以“厘米”为单位。
+- 页边距与多数缩进使用 Cm(...) 以“厘米”为单位；正文首行缩进使用“字符”单位设置。
 
 本配置文件用于集中管理论文排版关键参数（按当前配置默认值归纳）：
 - 封面标题：中文小二（18pt）黑体；外文小二（18pt）Times New Roman
-- 摘要：摘要标题小三（15pt）黑体；摘要内容使用正文样式（小四宋体/Times New Roman）
+- 摘要：摘要标题小四（12pt）宋体加粗、居中；摘要内容使用正文样式（小四宋体/Times New Roman）
 - 正文章节标题：标题加粗；一级到四级标题小三（15pt）宋体（Heading 1/2/3/4）
 - 标题留白：通过标题段落的段前/段后各一行实现（不插入空白段落）
-- 正文：中文宋体、外文 Times New Roman；小四（12pt）；行距 1.5 倍；段前段后 0；首行缩进约 2 字符（0.74cm）
+- 正文：中文宋体、外文 Times New Roman；小四（12pt）；行距 1.5 倍；段前段后 0；首行缩进 2 字符（严格）
 - 目录标题：目录页顶部“目录”二字视为章节标题——四号（14pt）宋体加粗、居中
 - 目录条目：章题目四号（14pt）黑体；节题目四号（14pt）宋体；页码用“……”点引导连接（由代码使用制表位 + leader dots + PAGEREF 实现）
 - 页面设置：页边距上 3.3cm、下 2.7cm、左 2.5cm、右 2.5cm；左侧装订线 0.5cm
 - 页眉页脚：页眉距 2.6cm、页脚距 2.0cm；页眉居中小五（9pt）宋体“苏州大学本科生毕业设计（论文）”并带横线；页脚居中页码
 - 代码块：Times New Roman 字体；代码字号 9pt；行号字号 8pt；行号栏宽 0.65cm
 - 参考文献：不首行缩进；按“[n]”分条；编号悬挂，正文对齐到统一缩进（1.2cm）；编号在悬挂区域内居中
+- 图注/表注：居中；不首行缩进
+- 表格：单元格内容不首行缩进
 """
 
 
@@ -40,7 +42,7 @@ class WordFormatConfig:
     body_ascii_font: str = "Times New Roman"  # 正文外文字体（Times New Roman）
     body_font_size_pt: float = 12.0  # 正文字号：小四=12pt
     body_line_spacing: float = 1.5  # 正文行距：1.5 倍
-    body_first_line_indent_cm: float = 0.74  # 正文首行缩进：约等于“小四 2 字符”的常用折算（cm）
+    body_first_line_indent_chars: int = 2  # 正文首行缩进：严格 2 字符（Word firstLineChars=200）
 
     title_east_asia_font: str = "黑体"  # 中文标题字体：黑体
     title_ascii_font: str = "Times New Roman"  # 外文标题字体：Times New Roman
@@ -48,9 +50,9 @@ class WordFormatConfig:
 
     abstract_heading_text_zh: str = "摘要"  # 中文摘要标题文字
     abstract_heading_text_en: str = "Abstract"  # 外文摘要标题文字
-    abstract_heading_font_east_asia: str = "黑体"  # 摘要标题中文字体（不约束摘要内容；摘要内容使用正文样式）
+    abstract_heading_font_east_asia: str = "宋体"  # 摘要标题中文字体（不约束摘要内容；摘要内容使用正文样式）
     abstract_heading_font_ascii: str = "Times New Roman"  # 摘要标题外文字体
-    abstract_heading_size_pt: float = 15.0  # 摘要标题字号：小三=15pt（不影响摘要内容）
+    abstract_heading_size_pt: float = 12.0  # 摘要标题字号：小四=12pt（不影响摘要内容）
 
     heading_east_asia_font: str = "宋体"  # 正文章节标题中文字体：宋体（标题加粗由样式设定）
     heading_ascii_font: str = "Times New Roman"  # 正文章节标题外文字体：Times New Roman
